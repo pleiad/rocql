@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+               img-src {{cspSource}} https: data:;
+               script-src 'nonce-{{nonce}}' https://unpkg.com;
+               style-src {{cspSource}} 'unsafe-inline' https://unpkg.com;
+               font-src https://unpkg.com data:;
+               connect-src 'none';" />
+    <title>Rocq Graph</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-editor-foreground);
+      }
+      #header {
+        padding: 8px 12px;
+        font-size: 12px;
+        border-bottom: 1px solid var(--vscode-panel-border, #444);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #stats { opacity: 0.8; }
+      #query, #search {
+        background: var(--vscode-input-background, #2a2a2a);
+        color: var(--vscode-input-foreground, inherit);
+        border: 1px solid var(--vscode-input-border, transparent);
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-family: var(--vscode-editor-font-family, 'SF Mono', Menlo, monospace);
+      }
+      #query { flex: 1 1 360px; }
+      #search { flex: 0 0 180px; font-family: inherit; }
+      #query:focus, #search:focus { outline: 1px solid var(--vscode-focusBorder, #007fd4); }
+      .btn {
+        background: transparent;
+        color: inherit;
+        border: 1px solid var(--vscode-button-border, #555);
+        padding: 2px 10px;
+        font-size: 11px;
+        border-radius: 3px;
+        cursor: pointer;
+        opacity: 0.85;
+      }
+      .btn:hover { opacity: 1; background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.1)); }
+      .btn.primary {
+        background: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #fff);
+        border-color: transparent;
+      }
+      .btn.primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+      #filters {
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--vscode-panel-border, #444);
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .filter-group {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .filter-group .label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.6;
+        margin-right: 4px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid transparent;
+        transition: opacity 80ms;
+      }
+      .chip .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .chip.off {
+        opacity: 0.35;
+        background: transparent !important;
+        border-color: currentColor;
+      }
+      #network {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+      }
+      #empty, #error {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        max-width: 480px;
+      }
+      #empty code, #error code {
+        background: var(--vscode-textBlockQuote-background, rgba(127,127,127,0.1));
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+      #error { color: var(--vscode-errorForeground, #f48771); }
+      #isolation-bar {
+        display: none;
+        padding: 4px 12px;
+        background: var(--vscode-editor-inactiveSelectionBackground, rgba(255, 200, 0, 0.08));
+        border-bottom: 1px solid var(--vscode-panel-border, #444);
+        font-size: 11px;
+        align-items: center;
+        gap: 8px;
+      }
+      #isolation-bar.on { display: flex; }
+      #isolation-bar .name { font-weight: 600; }
+      #isolation-bar select, #isolation-bar button {
+        background: transparent;
+        color: inherit;
+        border: 1px solid var(--vscode-button-border, #555);
+        border-radius: 3px;
+        font-size: 11px;
+        padding: 1px 6px;
+        cursor: pointer;
+      }
+      #ctx-menu {
+        position: absolute;
+        z-index: 10;
+        display: none;
+        background: var(--vscode-menu-background, #252526);
+        color: var(--vscode-menu-foreground, inherit);
+        border: 1px solid var(--vscode-menu-border, #444);
+        border-radius: 4px;
+        padding: 4px 0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        font-size: 12px;
+        min-width: 200px;
+      }
+      #ctx-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        color: inherit;
+        border: none;
+        padding: 4px 12px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #ctx-menu button:hover {
+        background: var(--vscode-menu-selectionBackground, #094771);
+        color: var(--vscode-menu-selectionForeground, #fff);
+      }
+      #ctx-menu hr {
+        margin: 4px 0;
+        border: none;
+        border-top: 1px solid var(--vscode-menu-separatorBackground, #444);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="header">
+      <strong>Rocq Graph</strong>
+      <span id="stats">—</span>
+      <input
+        id="query"
+        type="text"
+        spellcheck="false"
+        placeholder="GQL: ()-[]->()    Cmd+Enter para ejecutar"
+      />
+      <button id="run" class="btn primary" type="button" title="Cmd/Ctrl+Enter">Run</button>
+      <button id="default" class="btn" type="button" title="Volver al grafo completo">Default</button>
+      <button id="fit" class="btn" type="button" title="Re-centrar el viewport a lo visible">Fit</button>
+      <select id="presets" class="btn" title="Queries útiles">
+        <option value="">Presets…</option>
+        <option value="()-[]->()">All references</option>
+        <option value="()-[:REFERENCES_IN_TYPE]->()">Type references only</option>
+        <option value="()-[:REFERENCES_IN_PROOF]->()">Proof references only</option>
+        <option value="()-[:BELONGS_TO]->()">Constructors / fields</option>
+        <option value="(:Theorem)-[]->()">Theorems and their deps</option>
+        <option value="(:Lemma)-[]->()">Lemmas and their deps</option>
+        <option value="(:Admitted)">Admitted entries</option>
+        <option value="()-[]->(:Admitted)">Direct deps on admits</option>
+      </select>
+      <select id="group-mode" class="btn" title="Layout">
+        <option value="off" selected>Layout: free (barnesHut)</option>
+        <option value="color">File: color only</option>
+        <option value="cluster">File: color + islands</option>
+        <option value="global">Layered (global Sugiyama)</option>
+      </select>
+      <select id="global-layout" class="btn" title="Eje Y para layered global" style="display:none">
+        <option value="deps" selected>Y: por dependencias</option>
+        <option value="source">Y: por código fuente</option>
+      </select>
+    </div>
+    <div id="filters">
+      <div class="filter-group" id="kind-filters"><span class="label">Kind</span></div>
+      <div class="filter-group" id="edge-filters"><span class="label">Edge</span></div>
+      <input id="search" type="search" placeholder="Filtrar nodos por nombre…" />
+    </div>
+    <div id="isolation-bar">
+      <span>Isolated:</span>
+      <span class="name" id="iso-name">—</span>
+      <span>·</span>
+      <label>Dir
+        <select id="iso-mode">
+          <option value="both">both</option>
+          <option value="out">out</option>
+          <option value="in">in</option>
+        </select>
+      </label>
+      <label>Depth
+        <select id="iso-depth">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+      <button id="iso-clear" type="button">Clear</button>
+    </div>
+    <div id="ctx-menu">
+      <button data-action="isolate-both">Isolate (both)</button>
+      <button data-action="isolate-out">Isolate (outgoing)</button>
+      <button data-action="isolate-in">Isolate (incoming)</button>
+      <hr/>
+      <button data-action="open-file">Open file</button>
+    </div>
+    <div id="network"></div>
+    <div id="empty" style="display:none">
+      <p>El <code>.gdb</code> está vacío.</p>
+      <p>Pipeline de build pendiente. Por ahora, copiar un <code>graph.gdb</code> pre-construido a
+        <code>&lt;workspace&gt;/.rocqgraph/</code>.</p>
+    </div>
+    <div id="error" style="display:none"></div>
+
+    <script
+      nonce="{{nonce}}"
+      src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+    ></script>
+    <script nonce="{{nonce}}">
+      (() => {
+        const vscode = acquireVsCodeApi();
+
+        const ADMIT_COLOR = '#ff3b30';
+        const KIND_COLOR = {
+          Theorem: '#1f77b4',
+          Lemma: '#17becf',
+          Definition: '#2ca02c',
+          Fixpoint: '#bcbd22',
+          Inductive: '#ff7f0e',
+          Record: '#9467bd',
+          Class: '#8c564b',
+          Instance: '#e377c2',
+          Constructor: '#aec7e8',
+          Field: '#c5b0d5',
+          Axiom: '#d62728',
+          Parameter: '#7f7f7f',
+        };
+        const DEFAULT_COLOR = '#888';
+
+        const EDGE_COLOR = {
+          BELONGS_TO: '#888',
+          REFERENCES_IN_TYPE: '#3a86ff',
+          REFERENCES_IN_PROOF: '#fb5607',
+        };
+
+        const FILE_PALETTE = [
+          '#e6194B', '#3cb44b', '#ffe119', '#4363d8',
+          '#f58231', '#911eb4', '#42d4f4', '#f032e6',
+          '#bfef45', '#fabed4', '#469990', '#dcbeff',
+          '#9A6324', '#800000', '#aaffc3', '#808000',
+        ];
+        const fileColorMap = new Map();
+        function colorForFile(file) {
+          if (!file) return '#666';
+          if (!fileColorMap.has(file)) {
+            fileColorMap.set(
+              file,
+              FILE_PALETTE[fileColorMap.size % FILE_PALETTE.length],
+            );
+          }
+          return fileColorMap.get(file);
+        }
+
+        const container = document.getElementById('network');
+        const statsEl = document.getElementById('stats');
+        const emptyEl = document.getElementById('empty');
+        const errorEl = document.getElementById('error');
+        const searchEl = document.getElementById('search');
+        const queryEl = document.getElementById('query');
+        const runEl = document.getElementById('run');
+        const defaultEl = document.getElementById('default');
+        const fitEl = document.getElementById('fit');
+        const presetsEl = document.getElementById('presets');
+        const groupModeEl = document.getElementById('group-mode');
+        const globalLayoutEl = document.getElementById('global-layout');
+        let groupMode = 'off'; // 'off' | 'color' | 'cluster' | 'global'
+        let globalLayout = 'deps'; // 'deps' | 'source' — solo aplica si groupMode === 'global'
+        // groupByFile retained as derived flag for the color path.
+        let groupByFile = false;
+        let ready = false; // true cuando la primera stabilization terminó
+
+        function arrangeByFile() {
+          if (!network) return;
+          const filesArr = [...filesWithNodes].sort();
+          if (filesArr.length === 0) return;
+
+          const nodesByFile = new Map();
+          for (const n of rawNodes) {
+            const f = (n.props && n.props.file) || '?';
+            if (!nodesByFile.has(f)) nodesByFile.set(f, []);
+            nodesByFile.get(f).push(n);
+          }
+
+          // Out-adjacency restringida a aristas intra-archivo.
+          const nodeFile = new Map();
+          for (const [f, ns] of nodesByFile) for (const n of ns) nodeFile.set(n.id, f);
+          const outLocal = new Map();
+          for (const e of rawEdges) {
+            if (nodeFile.get(e.from) !== nodeFile.get(e.to)) continue;
+            if (!outLocal.has(e.from)) outLocal.set(e.from, new Set());
+            outLocal.get(e.from).add(e.to);
+          }
+
+          // Rank por longest-path: nodos sin out-edges => rank 0 (top).
+          // Ciclos se rompen tratando back-edges como rank 0.
+          const rank = new Map();
+          const onStack = new Set();
+          function rankOf(id) {
+            if (rank.has(id)) return rank.get(id);
+            if (onStack.has(id)) return 0;
+            onStack.add(id);
+            let m = 0;
+            for (const v of outLocal.get(id) || []) {
+              const r = rankOf(v) + 1;
+              if (r > m) m = r;
+            }
+            onStack.delete(id);
+            rank.set(id, m);
+            return m;
+          }
+          for (const n of rawNodes) rankOf(n.id);
+
+          // Hijos in-grafo para ordenar dentro de la capa minimizando cruces.
+          const hSpacing = 90;
+          const vSpacing = 110;
+
+          // Calcular tamaño máximo de celda en grid de archivos.
+          let cellSize = 500;
+          const fileLayout = new Map(); // file -> { byRank: Map<rank, Node[]>, width, height }
+          for (const [f, ns] of nodesByFile) {
+            const byRank = new Map();
+            for (const n of ns) {
+              const r = rank.get(n.id) ?? 0;
+              if (!byRank.has(r)) byRank.set(r, []);
+              byRank.get(r).push(n);
+            }
+            // Orden dentro de la capa: por línea del .v (estable y leíble).
+            for (const arr of byRank.values()) {
+              arr.sort((a, b) => {
+                const la = (a.props && a.props.line) ?? 0;
+                const lb = (b.props && b.props.line) ?? 0;
+                if (la !== lb) return la - lb;
+                return a.id - b.id;
+              });
+            }
+            const maxLayerLen = Math.max(...[...byRank.values()].map((a) => a.length));
+            const numLayers = byRank.size;
+            const w = (maxLayerLen - 1) * hSpacing;
+            const h = (numLayers - 1) * vSpacing;
+            fileLayout.set(f, { byRank, width: w, height: h });
+            if (Math.max(w, h) + 400 > cellSize) cellSize = Math.max(w, h) + 400;
+          }
+
+          const cols = Math.ceil(Math.sqrt(filesArr.length));
+          const fileCenters = new Map();
+          filesArr.forEach((f, i) => {
+            const r = Math.floor(i / cols);
+            const c = i % cols;
+            fileCenters.set(f, {
+              x: (c - (cols - 1) / 2) * cellSize,
+              y: (r - (cols - 1) / 2) * cellSize,
+            });
+          });
+
+          for (const [f, layout] of fileLayout) {
+            const center = fileCenters.get(f) || { x: 0, y: 0 };
+            const sortedRanks = [...layout.byRank.keys()].sort((a, b) => a - b);
+            const numLayers = sortedRanks.length;
+            sortedRanks.forEach((r, layerIdx) => {
+              const layer = layout.byRank.get(r);
+              const layerWidth = (layer.length - 1) * hSpacing;
+              const y =
+                center.y -
+                ((numLayers - 1) / 2) * vSpacing +
+                layerIdx * vSpacing;
+              layer.forEach((node, i) => {
+                const x = center.x - layerWidth / 2 + i * hSpacing;
+                positionCache[node.id] = { x, y };
+              });
+            });
+          }
+          // No movemos los nodos directamente: applyFilters() los va a posicionar
+          // al hacer setData (inyectando x,y desde positionCache). Esto funciona
+          // también para nodos actualmente ocultos.
+        }
+
+        // Rank por longest-path DESDE LAS FUENTES (rank 0 = nodos sin in-edges).
+        // Inverso al de arrangeByFile (que usa out-edges). Usado por el modo global.
+        function computeRankFromSources() {
+          const rank = new Map();
+          const onStack = new Set();
+          function rankOf(id) {
+            if (rank.has(id)) return rank.get(id);
+            if (onStack.has(id)) return 0;
+            onStack.add(id);
+            let m = 0;
+            for (const p of inAdj.get(id) || []) {
+              const r = rankOf(p) + 1;
+              if (r > m) m = r;
+            }
+            onStack.delete(id);
+            rank.set(id, m);
+            return m;
+          }
+          for (const n of rawNodes) rankOf(n.id);
+          return rank;
+        }
+
+        // Orden de archivos por profundidad topológica de fileDeps (menos dependencias arriba),
+        // desempate alfabético. Útil para el modo "Y por código fuente".
+        function fileBandIndex() {
+          const files = [...filesWithNodes];
+          const depth = new Map();
+          const onStack = new Set();
+          function depthOf(f) {
+            if (depth.has(f)) return depth.get(f);
+            if (onStack.has(f)) return 0;
+            onStack.add(f);
+            let m = 0;
+            for (const g of fileDeps.get(f) || []) {
+              const d = depthOf(g) + 1;
+              if (d > m) m = d;
+            }
+            onStack.delete(f);
+            depth.set(f, m);
+            return m;
+          }
+          for (const f of files) depthOf(f);
+          files.sort((a, b) => {
+            const da = depth.get(a) || 0;
+            const db = depth.get(b) || 0;
+            if (da !== db) return da - db;
+            return a.localeCompare(b);
+          });
+          const idx = new Map();
+          files.forEach((f, i) => idx.set(f, i));
+          return idx;
+        }
+
+        // Baricéntrica iterativa: ordena nodos dentro de cada capa para reducir cruces.
+        // Inicializa por (archivo, línea) y alterna pasadas top-down y bottom-up.
+        // Muta `layers` in-place y devuelve un map id -> posición horizontal dentro de su capa.
+        function barycentricSort(layers) {
+          for (const layer of layers) {
+            layer.nodes.sort((a, b) => {
+              const fa = (a.props && a.props.file) || '';
+              const fb = (b.props && b.props.file) || '';
+              if (fa !== fb) return fa.localeCompare(fb);
+              const la = (a.props && a.props.line) ?? 0;
+              const lb = (b.props && b.props.line) ?? 0;
+              if (la !== lb) return la - lb;
+              return a.id - b.id;
+            });
+          }
+          const posInLayer = new Map();
+          function recomputePos() {
+            posInLayer.clear();
+            for (const layer of layers) {
+              layer.nodes.forEach((n, i) => posInLayer.set(n.id, i));
+            }
+          }
+          recomputePos();
+          const PASSES = 16;
+          for (let pass = 0; pass < PASSES; pass += 1) {
+            const useParents = pass % 2 === 0;
+            const order = useParents ? layers : [...layers].reverse();
+            for (const layer of order) {
+              const scored = layer.nodes.map((n, i) => {
+                const neighbors = useParents
+                  ? inAdj.get(n.id) || []
+                  : outAdj.get(n.id) || [];
+                const xs = [];
+                for (const m of neighbors) {
+                  if (posInLayer.has(m)) xs.push(posInLayer.get(m));
+                }
+                const bary = xs.length
+                  ? xs.reduce((a, b) => a + b, 0) / xs.length
+                  : i;
+                return { node: n, bary, originalIdx: i };
+              });
+              scored.sort((a, b) => {
+                if (a.bary !== b.bary) return a.bary - b.bary;
+                return a.originalIdx - b.originalIdx;
+              });
+              layer.nodes = scored.map((s) => s.node);
+              recomputePos();
+            }
+          }
+          return posInLayer;
+        }
+
+        // Sugiyama global: Y = rank desde fuentes; X = baricéntrica con desempate por (archivo, línea).
+        // Aspect ratio controlado: ancho por capa capeado a MAX_LAYER_WIDTH.
+        function arrangeGlobalByDeps() {
+          if (rawNodes.length === 0) return;
+          const rank = computeRankFromSources();
+          const byRank = new Map();
+          for (const n of rawNodes) {
+            const r = rank.get(n.id) ?? 0;
+            if (!byRank.has(r)) byRank.set(r, []);
+            byRank.get(r).push(n);
+          }
+          const layers = [...byRank.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([key, nodes]) => ({ key, nodes }));
+          barycentricSort(layers);
+
+          const hSpacingNominal = 70;
+          const vSpacing = 140;
+          const MAX_LAYER_WIDTH = 2400;
+          layers.forEach((layer, layerIdx) => {
+            const y = layerIdx * vSpacing;
+            const n = layer.nodes.length;
+            const naturalWidth = (n - 1) * hSpacingNominal;
+            const hSpacing =
+              naturalWidth > MAX_LAYER_WIDTH && n > 1
+                ? MAX_LAYER_WIDTH / (n - 1)
+                : hSpacingNominal;
+            const layerWidth = (n - 1) * hSpacing;
+            layer.nodes.forEach((node, i) => {
+              const x = i * hSpacing - layerWidth / 2;
+              positionCache[node.id] = { x, y };
+            });
+          });
+        }
+
+        // Layered con Y proporcional a la línea del fuente, agrupado en bandas por archivo.
+        // Cada archivo ocupa una banda vertical alta; Y interno normalizado por (line / maxLineInFile).
+        // X por baricéntrica tratando a cada archivo como una capa, con ancho capeado.
+        function arrangeGlobalBySource() {
+          if (rawNodes.length === 0) return;
+          const fileIdx = fileBandIndex();
+          const bandHeight = 1600;
+          const margin = 120;
+
+          const maxLineByFile = new Map();
+          for (const n of rawNodes) {
+            const f = n.props && n.props.file;
+            const ln = (n.props && n.props.line) ?? 0;
+            if (!f) continue;
+            if ((maxLineByFile.get(f) ?? 0) < ln) maxLineByFile.set(f, ln);
+          }
+
+          const byFile = new Map();
+          for (const n of rawNodes) {
+            const f = (n.props && n.props.file) || '?';
+            if (!byFile.has(f)) byFile.set(f, []);
+            byFile.get(f).push(n);
+          }
+          const layers = [...byFile.entries()]
+            .sort(
+              (a, b) =>
+                (fileIdx.get(a[0]) ?? 999) - (fileIdx.get(b[0]) ?? 999),
+            )
+            .map(([key, nodes]) => ({ key, nodes }));
+          barycentricSort(layers);
+
+          const hSpacingNominal = 55;
+          const MAX_LAYER_WIDTH = 2400;
+          // Nudge para nodos que comparten la misma `line` (constructors / fields heredan
+          // la línea del padre) — los reparte verticalmente dentro de su sub-grupo.
+          const NUDGE = 12;
+          for (const layer of layers) {
+            const n = layer.nodes.length;
+            const naturalWidth = (n - 1) * hSpacingNominal;
+            const hSpacing =
+              naturalWidth > MAX_LAYER_WIDTH && n > 1
+                ? MAX_LAYER_WIDTH / (n - 1)
+                : hSpacingNominal;
+            const layerWidth = (n - 1) * hSpacing;
+            const idx = fileIdx.get(layer.key) ?? 0;
+            const lineGroups = new Map();
+            layer.nodes.forEach((node, i) => {
+              const ln = (node.props && node.props.line) ?? 0;
+              if (!lineGroups.has(ln)) lineGroups.set(ln, []);
+              lineGroups.get(ln).push({ node, i });
+            });
+            layer.nodes.forEach((node, i) => {
+              const x = i * hSpacing - layerWidth / 2;
+              const ln = (node.props && node.props.line) ?? 0;
+              const maxLn = maxLineByFile.get(layer.key) || 1;
+              const localY = (ln / maxLn) * (bandHeight - 2 * margin) + margin;
+              const group = lineGroups.get(ln) || [];
+              const slot = group.findIndex((g) => g.node.id === node.id);
+              const nudge =
+                group.length > 1 ? (slot - (group.length - 1) / 2) * NUDGE : 0;
+              const y = idx * bandHeight + localY + nudge;
+              positionCache[node.id] = { x, y };
+            });
+          }
+        }
+
+        function arrangeGlobal() {
+          if (globalLayout === 'source') arrangeGlobalBySource();
+          else arrangeGlobalByDeps();
+        }
+
+        function applyGroupMode() {
+          groupByFile = groupMode !== 'off';
+          globalLayoutEl.style.display = groupMode === 'global' ? '' : 'none';
+          if (groupMode === 'cluster') {
+            network?.setOptions({ physics: { enabled: false } });
+            arrangeByFile();
+            applyFilters({ keepCache: true });
+            network?.fit({ animation: { duration: 400 } });
+            return;
+          }
+          if (groupMode === 'global') {
+            network?.setOptions({ physics: { enabled: false } });
+            arrangeGlobal();
+            applyFilters({ keepCache: true });
+            network?.fit({ animation: { duration: 400 } });
+            return;
+          }
+          network?.setOptions({ physics: { enabled: true } });
+          network?.stabilize(300);
+          network?.once('stabilizationIterationsDone', () => {
+            network?.setOptions({ physics: { enabled: false } });
+            cachePositions();
+          });
+          applyFilters();
+        }
+        const kindFiltersEl = document.getElementById('kind-filters');
+        const edgeFiltersEl = document.getElementById('edge-filters');
+        const filtersEl = document.getElementById('filters');
+        const isolationBar = document.getElementById('isolation-bar');
+        const isoNameEl = document.getElementById('iso-name');
+        const isoModeEl = document.getElementById('iso-mode');
+        const isoDepthEl = document.getElementById('iso-depth');
+        const isoClearEl = document.getElementById('iso-clear');
+        const ctxMenu = document.getElementById('ctx-menu');
+
+        const HEADER_OFFSET = () =>
+          document.getElementById('header').offsetHeight +
+          filtersEl.offsetHeight +
+          (isolationBar.classList.contains('on') ? isolationBar.offsetHeight : 0);
+        function layoutNetwork() {
+          container.style.top = HEADER_OFFSET() + 'px';
+        }
+        window.addEventListener('resize', layoutNetwork);
+
+        let network = null;
+        let rawNodes = [];
+        let rawEdges = [];
+        let rawNodeCount = 0;
+        let rawEdgeCount = 0;
+        const nodeIndex = new Map();
+        const kindFilter = new Set();
+        const labelFilter = new Set();
+        const positionCache = {};
+        let searchTerm = '';
+        const outAdj = new Map();
+        const inAdj = new Map();
+        let isolation = null; // { id, mode: 'both'|'out'|'in', depth }
+
+        function rebuildAdjacency() {
+          outAdj.clear();
+          inAdj.clear();
+          for (const e of rawEdges) {
+            if (!outAdj.has(e.from)) outAdj.set(e.from, new Set());
+            outAdj.get(e.from).add(e.to);
+            if (!inAdj.has(e.to)) inAdj.set(e.to, new Set());
+            inAdj.get(e.to).add(e.from);
+          }
+        }
+
+        const fileDeps = new Map(); // file -> Set<file>
+        const filesWithNodes = new Set();
+        function rebuildFileDeps() {
+          fileDeps.clear();
+          filesWithNodes.clear();
+          for (const n of rawNodes) {
+            const f = n.props && n.props.file;
+            if (f) filesWithNodes.add(f);
+          }
+          for (const e of rawEdges) {
+            const s = nodeIndex.get(e.from);
+            const t = nodeIndex.get(e.to);
+            if (!s || !t) continue;
+            const sf = s.props && s.props.file;
+            const tf = t.props && t.props.file;
+            if (!sf || !tf || sf === tf) continue;
+            if (!fileDeps.has(sf)) fileDeps.set(sf, new Set());
+            fileDeps.get(sf).add(tf);
+          }
+        }
+        function transitiveFileDeps(file) {
+          const visited = new Set([file]);
+          const stack = [file];
+          while (stack.length) {
+            const f = stack.pop();
+            const deps = fileDeps.get(f);
+            if (!deps) continue;
+            for (const dep of deps) {
+              if (!visited.has(dep)) {
+                visited.add(dep);
+                stack.push(dep);
+              }
+            }
+          }
+          return visited;
+        }
+
+        function computeIsolationSet() {
+          if (!isolation || !nodeIndex.has(isolation.id)) return null;
+          const visited = new Set([isolation.id]);
+          let frontier = new Set([isolation.id]);
+          for (let d = 0; d < isolation.depth; d += 1) {
+            const next = new Set();
+            for (const id of frontier) {
+              if (isolation.mode === 'both' || isolation.mode === 'out') {
+                for (const n of outAdj.get(id) || []) {
+                  if (!visited.has(n)) next.add(n);
+                }
+              }
+              if (isolation.mode === 'both' || isolation.mode === 'in') {
+                for (const n of inAdj.get(id) || []) {
+                  if (!visited.has(n)) next.add(n);
+                }
+              }
+            }
+            for (const n of next) visited.add(n);
+            frontier = next;
+            if (!frontier.size) break;
+          }
+          return visited;
+        }
+
+        let cursorScope = null; // { file, line }
+
+        function renderIsolationBar() {
+          if (!isolation || !nodeIndex.has(isolation.id)) {
+            isolationBar.classList.remove('on');
+            layoutNetwork();
+            return;
+          }
+          const n = nodeIndex.get(isolation.id);
+          isoNameEl.textContent = nameOf(n);
+          isoModeEl.value = isolation.mode;
+          isoDepthEl.value = String(isolation.depth);
+          isolationBar.classList.add('on');
+          layoutNetwork();
+        }
+
+        function cachePositions() {
+          if (!network) return;
+          const pos = network.getPositions();
+          for (const id in pos) positionCache[id] = pos[id];
+        }
+
+        function kindOf(n) {
+          return (
+            (n.props && (n.props.kind || n.labels[0])) ||
+            n.labels[0] ||
+            '?'
+          );
+        }
+        function nameOf(n) {
+          return (n.props && n.props.name) || '#' + n.id;
+        }
+        function isAdmitted(n) {
+          if (n.props && n.props.admitted === true) return true;
+          const labels = Array.isArray(n.labels) ? n.labels : [];
+          return labels.indexOf('Admitted') >= 0;
+        }
+
+        function buildFilterChips() {
+          const kinds = new Set();
+          for (const n of rawNodes) kinds.add(kindOf(n));
+          const labels = new Set();
+          for (const e of rawEdges) labels.add(e.labels[0] || '?');
+
+          kindFilter.clear();
+          for (const k of kinds) kindFilter.add(k);
+          labelFilter.clear();
+          for (const l of labels) labelFilter.add(l);
+
+          renderChips(
+            kindFiltersEl,
+            [...kinds].sort(),
+            kindFilter,
+            (k) => KIND_COLOR[k] || DEFAULT_COLOR,
+          );
+          renderChips(
+            edgeFiltersEl,
+            [...labels].sort(),
+            labelFilter,
+            (l) => EDGE_COLOR[l] || '#aaa',
+          );
+        }
+
+        function renderChips(parent, items, activeSet, colorFn) {
+          parent.querySelectorAll('.chip').forEach((el) => el.remove());
+          for (const item of items) {
+            if (!activeSet.has(item)) activeSet.add(item);
+            const chip = document.createElement('span');
+            chip.className = 'chip';
+            const color = colorFn(item);
+            chip.style.background = color + '33';
+            chip.style.color = color;
+            chip.innerHTML =
+              '<span class="dot" style="background:' +
+              color +
+              '"></span>' +
+              item;
+            chip.addEventListener('click', () => {
+              if (activeSet.has(item)) activeSet.delete(item);
+              else activeSet.add(item);
+              chip.classList.toggle('off', !activeSet.has(item));
+              applyFilters();
+            });
+            parent.appendChild(chip);
+          }
+        }
+
+        function applyFilters(opts) {
+          if (!network) return;
+          if (!ready) return; // esperar al primer layout completo
+          if (!opts || !opts.keepCache) cachePositions();
+          const term = searchTerm.toLowerCase();
+          const isoSet = computeIsolationSet();
+
+          const allowedFiles =
+            cursorScope && filesWithNodes.has(cursorScope.file)
+              ? transitiveFileDeps(cursorScope.file)
+              : null;
+          const visibleNodes = rawNodes.filter((n) => {
+            if (isoSet && !isoSet.has(n.id)) return false;
+            if (!kindFilter.has(kindOf(n))) return false;
+            if (term && !nameOf(n).toLowerCase().includes(term)) return false;
+            if (allowedFiles && n.props) {
+              const f = n.props.file;
+              const ln = typeof n.props.line === 'number' ? n.props.line : 0;
+              if (f === cursorScope.file) {
+                if (ln > cursorScope.line) return false;
+              } else if (!allowedFiles.has(f)) {
+                return false;
+              }
+            }
+            return true;
+          });
+          const visibleIds = new Set(visibleNodes.map((n) => n.id));
+
+          const visibleEdges = rawEdges.filter((e) => {
+            const lbl = e.labels[0] || '?';
+            if (!labelFilter.has(lbl)) return false;
+            return visibleIds.has(e.from) && visibleIds.has(e.to);
+          });
+
+          const nodes = visibleNodes.map((n) => {
+            const kind = kindOf(n);
+            const pos = positionCache[n.id];
+            const file = n.props && n.props.file;
+            const fileColor = groupByFile ? colorForFile(file) : null;
+            const admit = isAdmitted(n);
+            const bg = KIND_COLOR[kind] || DEFAULT_COLOR;
+            const border = admit ? ADMIT_COLOR : fileColor;
+            const colorObj = border
+              ? {
+                  background: bg,
+                  border,
+                  highlight: { background: bg, border },
+                }
+              : bg;
+            const borderWidth = admit ? 4 : fileColor ? 3 : 0;
+            return {
+              id: n.id,
+              label: nameOf(n),
+              title:
+                kind +
+                ' · ' +
+                nameOf(n) +
+                (admit ? ' (admitted)' : '') +
+                '\\n' +
+                (file || '') +
+                ':' +
+                ((n.props && n.props.line) || '?'),
+              color: colorObj,
+              borderWidth,
+              shape: 'dot',
+              size: 10,
+              x: pos ? pos.x : undefined,
+              y: pos ? pos.y : undefined,
+              fixed: pos ? { x: false, y: false } : false,
+            };
+          });
+
+          const edges = visibleEdges.map((e) => {
+            const lbl = e.labels[0] || '?';
+            const where = (e.props && (e.props.ref_kind || e.props.where)) || '';
+            return {
+              id: e.id,
+              from: e.from,
+              to: e.to,
+              arrows: 'to',
+              color: { color: EDGE_COLOR[lbl] || '#aaa', opacity: 0.6 },
+              width: 1,
+              smooth: { type: 'continuous' },
+              title: where ? lbl + ' · ' + where : lbl,
+            };
+          });
+
+          const savedView = network.getViewPosition();
+          const savedScale = network.getScale();
+          network.setData({ nodes, edges });
+          network.moveTo({ position: savedView, scale: savedScale });
+          statsEl.textContent =
+            visibleNodes.length +
+            '/' +
+            rawNodeCount +
+            ' nodes · ' +
+            visibleEdges.length +
+            '/' +
+            rawEdgeCount +
+            ' edges';
+        }
+
+        function render(payload) {
+          errorEl.style.display = 'none';
+          rawNodes = payload.nodes;
+          rawEdges = payload.edges;
+          rawNodeCount = payload.nodeCount;
+          rawEdgeCount = payload.edgeCount;
+
+          if (!rawNodes.length) {
+            emptyEl.style.display = 'block';
+            statsEl.textContent = '0 nodes · 0 edges';
+            if (network) {
+              network.destroy();
+              network = null;
+            }
+            return;
+          }
+          emptyEl.style.display = 'none';
+
+          nodeIndex.clear();
+          for (const n of rawNodes) nodeIndex.set(n.id, n);
+
+          rebuildAdjacency();
+          rebuildFileDeps();
+          if (isolation && !nodeIndex.has(isolation.id)) {
+            isolation = null;
+          }
+          buildFilterChips();
+          renderIsolationBar();
+          layoutNetwork();
+
+          const initialNodes = rawNodes.map((n) => {
+            const kind = kindOf(n);
+            const file = n.props && n.props.file;
+            const fileColor = groupByFile ? colorForFile(file) : null;
+            const admit = isAdmitted(n);
+            const bg = KIND_COLOR[kind] || DEFAULT_COLOR;
+            const border = admit ? ADMIT_COLOR : fileColor;
+            const colorObj = border
+              ? {
+                  background: bg,
+                  border,
+                  highlight: { background: bg, border },
+                }
+              : bg;
+            const borderWidth = admit ? 4 : fileColor ? 3 : 0;
+            return {
+              id: n.id,
+              label: nameOf(n),
+              title:
+                kind +
+                ' · ' +
+                nameOf(n) +
+                (admit ? ' (admitted)' : '') +
+                '\\n' +
+                (file || '') +
+                ':' +
+                ((n.props && n.props.line) || '?'),
+              color: colorObj,
+              borderWidth,
+              shape: 'dot',
+              size: 10,
+            };
+          });
+
+          const initialEdges = rawEdges.map((e) => {
+            const lbl = e.labels[0] || '?';
+            const where = (e.props && (e.props.ref_kind || e.props.where)) || '';
+            return {
+              id: e.id,
+              from: e.from,
+              to: e.to,
+              arrows: 'to',
+              color: { color: EDGE_COLOR[lbl] || '#aaa', opacity: 0.6 },
+              width: 1,
+              smooth: { type: 'continuous' },
+              title: where ? lbl + ' · ' + where : lbl,
+            };
+          });
+
+          statsEl.textContent = rawNodes.length + ' nodes · ' + rawEdges.length + ' edges';
+
+          if (network) {
+            if (groupMode === 'cluster') {
+              arrangeByFile();
+              applyFilters({ keepCache: true });
+            } else if (groupMode === 'global') {
+              arrangeGlobal();
+              applyFilters({ keepCache: true });
+            } else {
+              applyFilters();
+            }
+            const hasNew = rawNodes.some(
+              (n) => positionCache[n.id] === undefined,
+            );
+            if (hasNew && groupMode !== 'cluster' && groupMode !== 'global') {
+              network.setOptions({ physics: { enabled: true } });
+              network.once('stabilizationIterationsDone', () => {
+                network.setOptions({ physics: { enabled: false } });
+                cachePositions();
+                applyFilters();
+              });
+              network.stabilize();
+            }
+            return;
+          }
+
+          network = new vis.Network(
+            container,
+            { nodes: initialNodes, edges: initialEdges },
+            {
+              nodes: {
+                font: { color: 'rgba(200,200,200,0.85)', size: 11 },
+                borderWidth: 0,
+              },
+              edges: { selectionWidth: 1.5 },
+              physics: {
+                enabled: true,
+                solver: 'barnesHut',
+                barnesHut: {
+                  gravitationalConstant: -8000,
+                  springConstant: 0.04,
+                  springLength: 120,
+                  avoidOverlap: 0.2,
+                },
+                stabilization: {
+                  enabled: true,
+                  iterations: 1500,
+                  updateInterval: 50,
+                  fit: true,
+                },
+                minVelocity: 0.75,
+              },
+              interaction: {
+                hover: true,
+                dragNodes: true,
+                tooltipDelay: 120,
+              },
+            },
+          );
+
+          network.once('stabilizationIterationsDone', () => {
+            network.setOptions({ physics: { enabled: false } });
+            cachePositions();
+            ready = true;
+            // Si el usuario eligió un modo layered, re-arrange tras el primer layout.
+            if (groupMode === 'cluster') {
+              arrangeByFile();
+              applyFilters({ keepCache: true });
+              network.fit({ animation: { duration: 400 } });
+            } else if (groupMode === 'global') {
+              arrangeGlobal();
+              applyFilters({ keepCache: true });
+              network.fit({ animation: { duration: 400 } });
+            } else {
+              applyFilters();
+            }
+          });
+
+          network.on('dragEnd', cachePositions);
+
+          network.on('doubleClick', (params) => {
+            const id = params.nodes && params.nodes[0];
+            if (id === undefined) return;
+            const n = nodeIndex.get(id);
+            const file = n && n.props && n.props.file;
+            const line = n && n.props && n.props.line;
+            if (!file || !line) return;
+            vscode.postMessage({ type: 'openFile', file, line });
+          });
+
+          network.on('oncontext', (params) => {
+            params.event.preventDefault();
+            const id = network.getNodeAt(params.pointer.DOM);
+            if (id === undefined || id === null) {
+              ctxMenu.style.display = 'none';
+              return;
+            }
+            ctxMenu.dataset.nodeId = String(id);
+            ctxMenu.style.left = params.event.clientX + 'px';
+            ctxMenu.style.top = params.event.clientY + 'px';
+            ctxMenu.style.display = 'block';
+          });
+        }
+
+        function showError(message) {
+          errorEl.textContent = message;
+          errorEl.style.display = 'block';
+        }
+
+        let searchDebounce;
+        searchEl.addEventListener('input', () => {
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(() => {
+            searchTerm = searchEl.value.trim();
+            applyFilters();
+          }, 150);
+        });
+
+        function submitQuery() {
+          errorEl.style.display = 'none';
+          searchEl.value = '';
+          searchTerm = '';
+          const q = queryEl.value.trim();
+          vscode.postMessage(
+            q ? { type: 'runQuery', query: q } : { type: 'runDefault' },
+          );
+        }
+
+        runEl.addEventListener('click', submitQuery);
+        fitEl.addEventListener('click', () => {
+          network?.fit({ animation: { duration: 400 } });
+        });
+        presetsEl.addEventListener('change', () => {
+          const q = presetsEl.value;
+          presetsEl.value = '';
+          if (!q) return;
+          queryEl.value = q;
+          submitQuery();
+        });
+
+        groupModeEl.addEventListener('change', () => {
+          groupMode = groupModeEl.value;
+          applyGroupMode();
+        });
+        globalLayoutEl.addEventListener('change', () => {
+          globalLayout = globalLayoutEl.value;
+          if (groupMode === 'global') applyGroupMode();
+        });
+        queryEl.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+            ev.preventDefault();
+            submitQuery();
+          } else if (ev.key === 'Enter') {
+            ev.preventDefault();
+            submitQuery();
+          }
+        });
+        defaultEl.addEventListener('click', () => {
+          queryEl.value = '';
+          searchEl.value = '';
+          searchTerm = '';
+          errorEl.style.display = 'none';
+          vscode.postMessage({ type: 'runDefault' });
+        });
+
+        ctxMenu.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-action]');
+          if (!btn) return;
+          const id = Number(ctxMenu.dataset.nodeId);
+          const action = btn.dataset.action;
+          ctxMenu.style.display = 'none';
+          if (action === 'isolate-both') {
+            isolation = { id, mode: 'both', depth: isolation?.depth ?? 2 };
+          } else if (action === 'isolate-out') {
+            isolation = { id, mode: 'out', depth: isolation?.depth ?? 2 };
+          } else if (action === 'isolate-in') {
+            isolation = { id, mode: 'in', depth: isolation?.depth ?? 2 };
+          } else if (action === 'open-file') {
+            const n = nodeIndex.get(id);
+            const file = n && n.props && n.props.file;
+            const line = n && n.props && n.props.line;
+            if (file && line) {
+              vscode.postMessage({ type: 'openFile', file, line });
+            }
+            return;
+          }
+          renderIsolationBar();
+          applyFilters();
+        });
+
+        document.addEventListener('click', (ev) => {
+          if (!ctxMenu.contains(ev.target)) {
+            ctxMenu.style.display = 'none';
+          }
+        });
+
+        isoModeEl.addEventListener('change', () => {
+          if (!isolation) return;
+          isolation.mode = isoModeEl.value;
+          applyFilters();
+        });
+        isoDepthEl.addEventListener('change', () => {
+          if (!isolation) return;
+          isolation.depth = Number(isoDepthEl.value);
+          applyFilters();
+        });
+        isoClearEl.addEventListener('click', () => {
+          isolation = null;
+          renderIsolationBar();
+          applyFilters();
+        });
+
+        function focusNode(id, name, isolate) {
+          if (!network) return;
+          if (!nodeIndex.has(id)) {
+            showError(
+              'El nodo "' + (name || id) +
+                '" no está en la vista actual. Probá con Default o con una query más amplia.',
+            );
+            return;
+          }
+          if (isolate) {
+            isolation = {
+              id,
+              mode: isolation?.mode ?? 'both',
+              depth: isolation?.depth ?? 2,
+            };
+            renderIsolationBar();
+            applyFilters();
+          }
+          network.selectNodes([id]);
+          network.focus(id, {
+            scale: 1.4,
+            animation: { duration: 600, easingFunction: 'easeInOutQuad' },
+          });
+        }
+
+        window.addEventListener('message', (event) => {
+          const msg = event.data;
+          if (!msg) return;
+          if (msg.type === 'graph') {
+            render(msg);
+          } else if (msg.type === 'error') {
+            showError(msg.message);
+          } else if (msg.type === 'focusNode' && typeof msg.id === 'number') {
+            focusNode(msg.id, msg.name, Boolean(msg.isolate));
+          } else if (msg.type === 'cursorScope') {
+            const previousFile = cursorScope?.file ?? null;
+            if (msg.enabled && msg.file && typeof msg.line === 'number') {
+              cursorScope = { file: msg.file, line: msg.line };
+            } else {
+              cursorScope = null;
+            }
+            const newFile = cursorScope?.file ?? null;
+            applyFilters();
+            // Fit solo cuando el archivo cambia (entrar/salir/cambiar de .v),
+            // no en cada movimiento del cursor dentro del mismo archivo.
+            if (network && newFile !== previousFile) {
+              setTimeout(
+                () => network.fit({ animation: { duration: 400 } }),
+                50,
+              );
+            }
+          }
+        });
+
+        vscode.postMessage({ type: 'ready' });
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,142 @@
+{
+  "name": "rocq-graph",
+  "displayName": "Rocq Graph",
+  "description": "Visualize Rocq/Coq dependency graphs with frogql",
+  "version": "0.0.1",
+  "publisher": "pleiad",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.v"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "rocqGraph.openGraphPanel",
+        "title": "Rocq Graph: Open graph panel"
+      },
+      {
+        "command": "rocqGraph.showInGraph",
+        "title": "Rocq Graph: Show in graph"
+      },
+      {
+        "command": "rocqGraph.showInGraphIsolated",
+        "title": "Rocq Graph: Show in graph and isolate"
+      },
+      {
+        "command": "rocqGraph.findReferences",
+        "title": "Rocq Graph: Find references"
+      },
+      {
+        "command": "rocqGraph.toggleCursorScope",
+        "title": "Rocq Graph: Toggle cursor scope (show only what's defined up to cursor)"
+      },
+      {
+        "command": "rocqGraph.toggleAutoGraph",
+        "title": "Rocq Graph: Toggle auto-graph (rebuild on save)"
+      },
+      {
+        "command": "rocqGraph.buildGraph",
+        "title": "Rocq Graph: Build graph (textual, fast)"
+      },
+      {
+        "command": "rocqGraph.buildGraphFull",
+        "title": "Rocq Graph: Build graph (full, with dpdgraph)"
+      },
+      {
+        "command": "rocqGraph.goToDefinition",
+        "title": "Rocq Graph: Go to definition"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "rocqGraph.editorContext",
+        "label": "Rocq Graph"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "rocqGraph.editorContext",
+          "when": "editorTextFocus && resourceExtname == .v",
+          "group": "navigation@10"
+        }
+      ],
+      "rocqGraph.editorContext": [
+        {
+          "command": "rocqGraph.goToDefinition",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rocqGraph.showInGraph",
+          "group": "navigation@2"
+        },
+        {
+          "command": "rocqGraph.showInGraphIsolated",
+          "group": "navigation@3"
+        },
+        {
+          "command": "rocqGraph.findReferences",
+          "group": "navigation@4"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "rocqGraph.showInGraph",
+        "key": "cmd+k g",
+        "mac": "cmd+k g",
+        "win": "ctrl+k g",
+        "linux": "ctrl+k g",
+        "when": "editorTextFocus && resourceExtname == .v"
+      },
+      {
+        "command": "rocqGraph.showInGraphIsolated",
+        "key": "cmd+k i",
+        "mac": "cmd+k i",
+        "win": "ctrl+k i",
+        "linux": "ctrl+k i",
+        "when": "editorTextFocus && resourceExtname == .v"
+      }
+    ],
+    "configuration": {
+      "title": "Rocq Graph",
+      "properties": {
+        "rocqGraph.defaultQuery": {
+          "type": "string",
+          "default": "",
+          "description": "Query GQL ejecutada al abrir el panel y al click en Default. Vacío = grafo completo (todos los nodos + todos los edges). Para queries puntuales, usar el dropdown 'Presets' del webview."
+        },
+        "rocqGraph.autoGraph.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Estado persistido del toggle auto-graph. Cuando está activo, el grafo se reconstruye con diff incremental al guardar un .v y se enriquece con dpdgraph cuando VsRocq deja de reportar errores."
+        },
+        "rocqGraph.autoGraph.dpdOnGreen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Si auto-graph está activo, dispara harvest + merge de dpdgraph cuando VsRocq deja de reportar errores en un .v durante la ventana de quietud. Apagar para mantener solo la capa textual."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "test": "tsc -p tsconfig.test.json && node --test \"out-tests/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "frogql": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
