@@ -1,10 +1,21 @@
 {
-  "name": "rocq-graph",
-  "displayName": "Rocq Graph",
-  "description": "Visualize Rocq/Coq dependency graphs with frogql",
-  "version": "0.0.1",
+  "name": "rocql",
+  "displayName": "Rocql",
+  "description": "Explore Rocq/Coq proof developments as an interactive dependency graph, with go-to-definition, find-references and live rebuild on save.",
+  "version": "0.0.4",
   "publisher": "pleiad",
-  "private": true,
+  "license": "MIT",
+  "categories": [
+    "Visualization",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "rocq",
+    "coq",
+    "dependency graph",
+    "proof",
+    "gql"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -19,45 +30,49 @@
     "commands": [
       {
         "command": "rocqGraph.openGraphPanel",
-        "title": "Rocq Graph: Open graph panel"
+        "title": "Rocql: Open graph panel"
       },
       {
         "command": "rocqGraph.showInGraph",
-        "title": "Rocq Graph: Show in graph"
+        "title": "Rocql: Show in graph"
       },
       {
         "command": "rocqGraph.showInGraphIsolated",
-        "title": "Rocq Graph: Show in graph and isolate"
+        "title": "Rocql: Show in graph and isolate"
       },
       {
         "command": "rocqGraph.findReferences",
-        "title": "Rocq Graph: Find references"
+        "title": "Rocql: Find references"
       },
       {
         "command": "rocqGraph.toggleCursorScope",
-        "title": "Rocq Graph: Toggle cursor scope (show only what's defined up to cursor)"
+        "title": "Rocql: Toggle cursor scope (show only what's defined up to cursor)"
       },
       {
         "command": "rocqGraph.toggleAutoGraph",
-        "title": "Rocq Graph: Toggle auto-graph (rebuild on save)"
+        "title": "Rocql: Toggle auto-graph (rebuild on save)"
       },
       {
         "command": "rocqGraph.buildGraph",
-        "title": "Rocq Graph: Build graph (textual, fast)"
+        "title": "Rocql: Build graph (textual, fast)"
       },
       {
         "command": "rocqGraph.buildGraphFull",
-        "title": "Rocq Graph: Build graph (full, with dpdgraph)"
+        "title": "Rocql: Build graph (full, with dpdgraph)"
       },
       {
         "command": "rocqGraph.goToDefinition",
-        "title": "Rocq Graph: Go to definition"
+        "title": "Rocql: Go to definition"
+      },
+      {
+        "command": "rocqGraph.jumpToPaper",
+        "title": "Rocql: Jump to paper (PDF)"
       }
     ],
     "submenus": [
       {
         "id": "rocqGraph.editorContext",
-        "label": "Rocq Graph"
+        "label": "Rocql"
       }
     ],
     "menus": {
@@ -84,6 +99,10 @@
         {
           "command": "rocqGraph.findReferences",
           "group": "navigation@4"
+        },
+        {
+          "command": "rocqGraph.jumpToPaper",
+          "group": "navigation@5"
         }
       ]
     },
@@ -103,10 +122,18 @@
         "win": "ctrl+k i",
         "linux": "ctrl+k i",
         "when": "editorTextFocus && resourceExtname == .v"
+      },
+      {
+        "command": "rocqGraph.jumpToPaper",
+        "key": "cmd+k p",
+        "mac": "cmd+k p",
+        "win": "ctrl+k p",
+        "linux": "ctrl+k p",
+        "when": "editorTextFocus && resourceExtname == .v"
       }
     ],
     "configuration": {
-      "title": "Rocq Graph",
+      "title": "Rocql",
       "properties": {
         "rocqGraph.defaultQuery": {
           "type": "string",
@@ -132,7 +159,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"out-tests/tests/**/*.test.js\""
   },
   "dependencies": {
-    "frogql": "latest"
+    "frogql": "^0.2.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

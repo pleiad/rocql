@@ -51,12 +51,22 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isDpdgraphMissingError = isDpdgraphMissingError;
 exports.topoSortModules = topoSortModules;
 exports.parseDpd = parseDpd;
 exports.harvestDpdgraph = harvestDpdgraph;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+/**
+ * ¿El stderr de rocq indica que falta el plugin coq-dpdgraph? La firma es el
+ * "Cannot find a physical path bound to logical path dpdgraph" que emite al no
+ * resolver el `Require dpdgraph.dpdgraph` del query. Anclado a `dpdgraph` para
+ * no confundirse con el mismo error sobre un módulo del proyecto.
+ */
+function isDpdgraphMissingError(stderr) {
+    return /Cannot find a physical path bound to logical path\s+dpdgraph\b/.test(stderr);
+}
 function writeQueryFile(cacheDir, allModules, target, dpdName) {
     const safeStem = target.replace(/[^A-Za-z0-9_]/g, '_');
     const queryPath = path.join(cacheDir, `_dpd_${safeStem}.v`);
@@ -339,6 +349,16 @@ async function harvestDpdgraph(opts) {
             queryBase,
         ]);
         if (code !== 0) {
+            // Plugin ausente: el `Require dpdgraph.dpdgraph` del query falla igual
+            // para todos los módulos. Abortamos el harvest del kernel sin reintentar
+            // y señalamos la condición global; el textual queda intacto.
+            if (isDpdgraphMissingError(stderr)) {
+                return {
+                    graph: { nodes: allNodes, edges: allEdges },
+                    dpdgraphMissing: true,
+                    skipped: skipped.length > 0 ? skipped : undefined,
+                };
+            }
             console.error(`[rocq-graph] compile failed on query for ${target} (exit ${code}):\n${stderr}`);
             skipped.push({
                 module: target,

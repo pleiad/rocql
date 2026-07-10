@@ -4,7 +4,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { parseDpd, harvestDpdgraph, topoSortModules } from '../src/dpdgraph';
+import {
+  parseDpd,
+  harvestDpdgraph,
+  topoSortModules,
+  isDpdgraphMissingError,
+} from '../src/dpdgraph';
 import { discoverCoqProject } from '../src/coqProject';
 
 function withTmpDir<T>(fn: (dir: string) => Promise<T> | T): Promise<T> {
@@ -50,6 +55,29 @@ describe('parseDpd', () => {
     const raw = parseDpd(text);
     assert.equal(raw.nodes[0].kind, 'inductive');
     assert.equal(raw.nodes[1].kind, 'construct');
+  });
+});
+
+describe('isDpdgraphMissingError', () => {
+  test('detecta la firma del plugin ausente sobre el logical path dpdgraph', () => {
+    const stderr =
+      'File "./_dpd_AbsInt.v", line 2, characters 8-25:\n' +
+      'Error: Cannot find a physical path bound to logical path dpdgraph.';
+    assert.equal(isDpdgraphMissingError(stderr), true);
+  });
+
+  test('no confunde el mismo error sobre un módulo del proyecto', () => {
+    const stderr =
+      'File "./GradualSystem.v", line 9, characters 15-27:\n' +
+      'Error: Cannot find a physical path bound to logical path StaticSystem.';
+    assert.equal(isDpdgraphMissingError(stderr), false);
+  });
+
+  test('un error de compilación cualquiera no matchea', () => {
+    assert.equal(
+      isDpdgraphMissingError('Error: Syntax error: ... unexpected token'),
+      false,
+    );
   });
 });
 

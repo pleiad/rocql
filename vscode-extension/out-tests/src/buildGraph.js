@@ -12,6 +12,7 @@
 // - Resolución incremental por byte offset: una ref antes de redefinir un
 //   nombre apunta al global previo, no a la forward-ref local.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.IDENT = exports.IDENT_CONT = exports.IDENT_START = void 0;
 exports.buildGraph = buildGraph;
 const ENTRY_KEYWORDS = [
     'Theorem', 'Lemma', 'Corollary', 'Proposition', 'Fact', 'Remark',
@@ -21,11 +22,21 @@ const ENTRY_KEYWORDS = [
     'Variable', 'Hypothesis', 'Axiom', 'Parameter',
 ];
 const PROOF_TERMINATORS = new Set(['Qed', 'Defined', 'Admitted', 'Abort', 'Save']);
-const ENTRY_RE = new RegExp("(?<![A-Za-z0-9_'])" +
+// Identificadores Rocq: el primer carácter es letra Unicode o `_`; los
+// siguientes agregan dígitos, primas y marcas/subíndices. Coq acepta nombres
+// como `αi64`, `β'`, `xᵢ`; restringir a ASCII (`[A-Za-z_]`) los dejaba fuera
+// del grafo y rompía Cmd+Click sobre ellos. Todas las regex que usan estos
+// fragmentos llevan el flag `u`. Exportados para reusar el mismo léxico en
+// el DefinitionProvider (extension.ts) y mantener una sola fuente de verdad.
+exports.IDENT_START = String.raw `[_\p{L}]`;
+exports.IDENT_CONT = String.raw `[_\p{L}\p{N}\p{M}']`;
+exports.IDENT = `${exports.IDENT_START}${exports.IDENT_CONT}*`;
+const DOTTED_IDENT = `${exports.IDENT}(?:\\.${exports.IDENT})*`;
+const ENTRY_RE = new RegExp(`(?<!${exports.IDENT_CONT})` +
     '(?:(?:Local|Global|Polymorphic|Monomorphic|Program|Private)\\s+)*' +
     '(?<kw>' + ENTRY_KEYWORDS.join('|') + ')' +
-    "\\s+(?<name>[A-Za-z_][A-Za-z0-9_']*)");
-const QUALIFIED_IDENT_RE = /[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*/g;
+    `\\s+(?<name>${exports.IDENT})`, 'u');
+const QUALIFIED_IDENT_RE = new RegExp(DOTTED_IDENT, 'gu');
 const COQ_RESERVED = new Set([
     'forall', 'exists', 'fun', 'match', 'with', 'end', 'let', 'in', 'if',
     'then', 'else', 'as', 'return', 'fix', 'cofix', 'struct', 'measure',
@@ -55,16 +66,16 @@ const CONSTRUCTOR_KIND = {
     Record: 'Constructor',
 };
 // Clasificación de comandos top-level (un comando = head hasta el primer `.`).
-const MODULE_DECL_RE = /^\s*(?:Local\s+|Global\s+)?Module(\s+Type)?\s+([A-Za-z_][A-Za-z0-9_']*)(\s*\.|\s+(?::|<:|:=|\())/;
-const SECTION_BEGIN_RE = /^\s*Section\s+([A-Za-z_][A-Za-z0-9_']*)\s*\./;
-const END_RE = /^\s*End\s+([A-Za-z_][A-Za-z0-9_']*)\s*\./;
+const MODULE_DECL_RE = new RegExp(`^\\s*(?:Local\\s+|Global\\s+)?Module(\\s+Type)?\\s+(${exports.IDENT})(\\s*\\.|\\s+(?::|<:|:=|\\())`, 'u');
+const SECTION_BEGIN_RE = new RegExp(`^\\s*Section\\s+(${exports.IDENT})\\s*\\.`, 'u');
+const END_RE = new RegExp(`^\\s*End\\s+(${exports.IDENT})\\s*\\.`, 'u');
 // Lista de uno-o-más dotted-idents separados por whitespace. Acepta `A`,
 // `A.Foo`, `A B`, `A.Foo B.Bar.Sub`, terminado por `.` final del statement.
-const MODULE_LIST = String.raw `((?:[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*\s*)+)`;
-const REQUIRE_DIRECTIVE_RE = new RegExp(String.raw `^\s*(?:From\s+[A-Za-z_][A-Za-z0-9_'.]*\s+)?Require(?:\s+(?:Import|Export))?\s+` +
+const MODULE_LIST = `((?:${DOTTED_IDENT}\\s*)+)`;
+const REQUIRE_DIRECTIVE_RE = new RegExp(`^\\s*(?:From\\s+${DOTTED_IDENT}\\s+)?Require(?:\\s+(?:Import|Export))?\\s+` +
     MODULE_LIST +
-    String.raw `\.`);
-const IMPORT_DIRECTIVE_RE = new RegExp(String.raw `^\s*(?:Import|Export)\s+` + MODULE_LIST + String.raw `\.`);
+    `\\.`, 'u');
+const IMPORT_DIRECTIVE_RE = new RegExp(`^\\s*(?:Import|Export)\\s+` + MODULE_LIST + `\\.`, 'u');
 function stripComments(s) {
     const out = [];
     let i = 0;

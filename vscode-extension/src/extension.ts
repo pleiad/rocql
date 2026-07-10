@@ -2,9 +2,29 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { open, importJson, Connection } from 'frogql';
-import { buildGraph, BuiltGraph } from './buildGraph';
+import { buildGraph, BuiltGraph, IDENT } from './buildGraph';
 import { discoverCoqProject } from './coqProject';
 import { harvestDpdgraph } from './dpdgraph';
+
+/**
+ * coq-dpdgraph no está instalado: muestra un mensaje accionable y, si el
+ * usuario acepta, lanza `opam install` en una terminal del entorno activo
+ * (dentro del dev container cuando aplica). El grafo textual no se ve afectado.
+ */
+async function showDpdgraphMissingMessage(): Promise<void> {
+  const install = 'Instalar coq-dpdgraph';
+  const choice = await vscode.window.showWarningMessage(
+    'Rocql: coq-dpdgraph no está instalado. El enrichment del kernel lo ' +
+      'requiere; el grafo textual sigue funcionando. Instálalo con ' +
+      '`opam install coq-dpdgraph`.',
+    install,
+  );
+  if (choice === install) {
+    const term = vscode.window.createTerminal('coq-dpdgraph install');
+    term.show();
+    term.sendText('opam install --yes coq-dpdgraph');
+  }
+}
 import { mergeGraphs } from './mergeGraph';
 import {
   builtGraphFingerprint,
@@ -16,6 +36,7 @@ import {
   VerificationTracker,
   isVsRocqInstalled,
 } from './verification';
+import { findAnchorLine, ROCQ_ANCHOR_MACRO } from './paperLink';
 
 interface NodeRef {
   id: number;
@@ -59,31 +80,34 @@ let dpdDebounceTimer: NodeJS.Timeout | undefined;
 let autoGraphInFlight = false;
 let dpdInFlight = false;
 let vsRocqInstalled = false;
+// Evita repetir la notificación de "coq-dpdgraph ausente" en cada ciclo de
+// auto-graph. Se muestra una vez por sesión.
+let dpdgraphMissingNotified = false;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: abre una carpeta de workspace para activar la extensión.',
+      'Rocql: abre una carpeta de workspace para activar la extensión.',
     );
     return;
   }
 
-  // No tiene sentido crear .rocqgraph/graph.gdb en proyectos sin Rocq.
+  // No tiene sentido crear .rocql/graph.gdb en proyectos sin Rocq.
   // El activationEvent `workspaceContains:**/*.v` ya evita activar la
   // extensión en esos casos; esto cubre activaciones por otras vías
   // (p. ej. invocar un comando) y workspaces donde los únicos .v están
-  // bajo node_modules / _build / .rocqgraph.
+  // bajo node_modules / _build / .rocql.
   const vFiles = await vscode.workspace.findFiles(
     '**/*.v',
-    '**/{node_modules,_build,.rocqgraph}/**',
+    '**/{node_modules,_build,.rocql}/**',
     1,
   );
   if (vFiles.length === 0) {
     return;
   }
 
-  const dir = path.join(folder.uri.fsPath, '.rocqgraph');
+  const dir = path.join(folder.uri.fsPath, '.rocql');
   fs.mkdirSync(dir, { recursive: true });
   gdbPath = path.join(dir, 'graph.gdb');
 
@@ -103,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       importJson(gdbPath, emptyJson);
     } catch (err) {
       vscode.window.showErrorMessage(
-        `Rocq Graph: no pude crear ${gdbPath}: ${String(err)}`,
+        `Rocql: no pude crear ${gdbPath}: ${String(err)}`,
       );
       return;
     } finally {
@@ -119,7 +143,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     connection = open(gdbPath);
   } catch (err) {
     vscode.window.showErrorMessage(
-      `Rocq Graph: no pude abrir ${gdbPath}: ${String(err)}`,
+      `Rocql: no pude abrir ${gdbPath}: ${String(err)}`,
     );
     return;
   }
@@ -129,9 +153,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     100,
   );
   statusBar.command = 'rocqGraph.openGraphPanel';
-  statusBar.tooltip = `Rocq Graph database: ${gdbPath}`;
+  statusBar.tooltip = `Rocql database: ${gdbPath}`;
   refreshStatusBar();
-  statusBar.show();
   context.subscriptions.push(statusBar);
 
   cursorStatusBar = vscode.window.createStatusBarItem(
@@ -140,7 +163,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   cursorStatusBar.command = 'rocqGraph.toggleCursorScope';
   refreshCursorStatusBar();
-  cursorStatusBar.show();
   context.subscriptions.push(cursorStatusBar);
 
   autoGraphStatusBar = vscode.window.createStatusBarItem(
@@ -150,8 +172,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   autoGraphStatusBar.command = 'rocqGraph.toggleAutoGraph';
   vsRocqInstalled = isVsRocqInstalled();
   refreshAutoGraphStatusBar();
-  autoGraphStatusBar.show();
   context.subscriptions.push(autoGraphStatusBar);
+
+  // Los tres items de la barra solo tienen sentido sobre archivos Rocq.
+  // Mostrarlos/ocultarlos según el editor activo en vez de dejarlos fijos.
+  updateStatusBarVisibility();
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateStatusBarVisibility),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('rocqGraph.openGraphPanel', () =>
@@ -180,6 +208,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand('rocqGraph.buildGraphFull', () =>
       runBuildFull(),
+    ),
+    vscode.commands.registerCommand('rocqGraph.jumpToPaper', () =>
+      jumpToPaper(),
     ),
     vscode.languages.registerDefinitionProvider(
       { pattern: '**/*.v', scheme: 'file' },
@@ -212,6 +243,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       while (autoGraphSubs.length) autoGraphSubs.pop()?.dispose();
     },
   });
+}
+
+/**
+ * Muestra los items de la barra solo cuando el editor activo es un archivo
+ * Rocq. Cuando el foco está fuera de un editor de texto (webview del grafo,
+ * terminal, settings) `activeTextEditor` es undefined: ahí mantenemos el
+ * estado actual en vez de ocultar, para no parpadear al usar el panel del
+ * grafo (mismo criterio que `emitCursorScope`).
+ */
+function updateStatusBarVisibility(): void {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  const isRocq =
+    ed.document.languageId === 'coq' || ed.document.fileName.endsWith('.v');
+  for (const item of [statusBar, cursorStatusBar, autoGraphStatusBar]) {
+    if (!item) continue;
+    if (isRocq) item.show();
+    else item.hide();
+  }
 }
 
 function refreshCursorStatusBar(): void {
@@ -268,7 +318,7 @@ function toggleCursorScope(): void {
 
 async function runBuild(): Promise<void> {
   if (!gdbPath) {
-    vscode.window.showWarningMessage('Rocq Graph: el workspace no está inicializado.');
+    vscode.window.showWarningMessage('Rocql: el workspace no está inicializado.');
     return;
   }
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -277,18 +327,18 @@ async function runBuild(): Promise<void> {
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: 'Rocq Graph: building (textual)',
+      title: 'Rocql: building (textual)',
       cancellable: false,
     },
     async (progress) => {
       progress.report({ message: 'Searching .v files…' });
       const uris = await vscode.workspace.findFiles(
         '**/*.v',
-        '**/{node_modules,_build,.rocqgraph}/**',
+        '**/{node_modules,_build,.rocql}/**',
       );
       if (uris.length === 0) {
         vscode.window.showWarningMessage(
-          'Rocq Graph: no encontré archivos .v en el workspace.',
+          'Rocql: no encontré archivos .v en el workspace.',
         );
         return;
       }
@@ -306,7 +356,7 @@ async function runBuild(): Promise<void> {
       const ok = await importGraphIntoGdb(graph, folder.uri.fsPath);
       if (!ok) return;
       vscode.window.showInformationMessage(
-        `Rocq Graph: ${graph.nodes.length} nodes, ${graph.edges.length} edges from ${uris.length} files.`,
+        `Rocql: ${graph.nodes.length} nodes, ${graph.edges.length} edges from ${uris.length} files.`,
       );
     },
   );
@@ -314,7 +364,7 @@ async function runBuild(): Promise<void> {
 
 async function runBuildFull(): Promise<void> {
   if (!gdbPath) {
-    vscode.window.showWarningMessage('Rocq Graph: el workspace no está inicializado.');
+    vscode.window.showWarningMessage('Rocql: el workspace no está inicializado.');
     return;
   }
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -323,18 +373,18 @@ async function runBuildFull(): Promise<void> {
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: 'Rocq Graph: building (full, with dpdgraph)',
+      title: 'Rocql: building (full, with dpdgraph)',
       cancellable: false,
     },
     async (progress) => {
       progress.report({ message: 'Searching .v files…' });
       const uris = await vscode.workspace.findFiles(
         '**/*.v',
-        '**/{node_modules,_build,.rocqgraph}/**',
+        '**/{node_modules,_build,.rocql}/**',
       );
       if (uris.length === 0) {
         vscode.window.showWarningMessage(
-          'Rocq Graph: no encontré archivos .v en el workspace.',
+          'Rocql: no encontré archivos .v en el workspace.',
         );
         return;
       }
@@ -349,7 +399,7 @@ async function runBuildFull(): Promise<void> {
 
       if (project.modules.size === 0) {
         vscode.window.showWarningMessage(
-          'Rocq Graph: no pude mapear archivos .v a módulos Coq. Falling back al build textual.',
+          'Rocql: no pude mapear archivos .v a módulos Coq. Falling back al build textual.',
         );
         const ok = await importGraphIntoGdb(textual, rootDir);
         if (!ok) return;
@@ -359,7 +409,7 @@ async function runBuildFull(): Promise<void> {
       progress.report({
         message: `Harvesting dpdgraph (${project.modules.size} modules)…`,
       });
-      const cacheDir = path.join(rootDir, '.rocqgraph', 'dpd');
+      const cacheDir = path.join(rootDir, '.rocql', 'dpd');
       const harvest = await harvestDpdgraph({
         project,
         cacheDir,
@@ -370,9 +420,12 @@ async function runBuildFull(): Promise<void> {
       let mergeNote = '';
       // `error` solo se setea cuando NO compiló ningún módulo. Si hubo algunos
       // exitosos, harvest.graph contiene su subconjunto y entramos al merge.
-      if (harvest.error) {
+      if (harvest.dpdgraphMissing) {
+        await showDpdgraphMissingMessage();
+        graph = textual;
+      } else if (harvest.error) {
         vscode.window.showWarningMessage(
-          `Rocq Graph: dpdgraph falló entero (${harvest.error.slice(0, 120)}…). Sigo con el textual puro.`,
+          `Rocql: dpdgraph falló entero (${harvest.error.slice(0, 120)}…). Sigo con el textual puro.`,
         );
         graph = textual;
       } else {
@@ -385,7 +438,7 @@ async function runBuildFull(): Promise<void> {
         if (harvest.skipped && harvest.skipped.length > 0) {
           const list = harvest.skipped.map((s) => s.module).join(', ');
           vscode.window.showWarningMessage(
-            `Rocq Graph: ${harvest.skipped.length} módulo(s) sin enrichment por errores de compilación: ${list}. Detalle en Output → Extension Host.`,
+            `Rocql: ${harvest.skipped.length} módulo(s) sin enrichment por errores de compilación: ${list}. Detalle en Output → Extension Host.`,
           );
         }
       }
@@ -394,7 +447,7 @@ async function runBuildFull(): Promise<void> {
       const ok = await importGraphIntoGdb(graph, rootDir);
       if (!ok) return;
       vscode.window.showInformationMessage(
-        `Rocq Graph: ${graph.nodes.length} nodes, ${graph.edges.length} edges from ${uris.length} files.${mergeNote}`,
+        `Rocql: ${graph.nodes.length} nodes, ${graph.edges.length} edges from ${uris.length} files.${mergeNote}`,
       );
     },
   );
@@ -436,7 +489,7 @@ async function importGraphIntoGdb(
   workspaceFsPath: string,
 ): Promise<boolean> {
   if (!gdbPath) return false;
-  const dir = path.join(workspaceFsPath, '.rocqgraph');
+  const dir = path.join(workspaceFsPath, '.rocql');
   fs.mkdirSync(dir, { recursive: true });
   const jsonPath = path.join(dir, 'graph.json');
   fs.writeFileSync(jsonPath, JSON.stringify(graph));
@@ -454,13 +507,13 @@ async function importGraphIntoGdb(
   try {
     importJson(gdbPath, jsonPath);
   } catch (err) {
-    vscode.window.showErrorMessage(`Rocq Graph: import falló: ${String(err)}`);
+    vscode.window.showErrorMessage(`Rocql: import falló: ${String(err)}`);
     return false;
   }
   try {
     connection = open(gdbPath);
   } catch (err) {
-    vscode.window.showErrorMessage(`Rocq Graph: reopen falló: ${String(err)}`);
+    vscode.window.showErrorMessage(`Rocql: reopen falló: ${String(err)}`);
     return false;
   }
   try {
@@ -476,7 +529,10 @@ async function importGraphIntoGdb(
   return true;
 }
 
-const ROCQ_IDENT_RE = /[A-Za-z_][A-Za-z0-9_']*/;
+// Mismo léxico Unicode que el builder, para que Cmd+Click seleccione la
+// palabra completa sobre identificadores como `αi64`. El flag `u` es necesario
+// para que las propiedades Unicode (\p{L} etc.) tengan efecto.
+const ROCQ_IDENT_RE = new RegExp(IDENT, 'u');
 
 function symbolUnderCursor(): string | undefined {
   const editor = vscode.window.activeTextEditor;
@@ -502,7 +558,7 @@ function showInGraph(
   const sym = symbolUnderCursor();
   if (!sym) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: poné el cursor sobre un identificador.',
+      'Rocql: poné el cursor sobre un identificador.',
     );
     return;
   }
@@ -513,7 +569,7 @@ function showInGraph(
       10,
     ) as unknown[];
   } catch (err) {
-    vscode.window.showErrorMessage(`Rocq Graph: ${String(err)}`);
+    vscode.window.showErrorMessage(`Rocql: ${String(err)}`);
     return;
   }
   const first = (rows[0] as Record<string, unknown> | undefined) ?? undefined;
@@ -525,7 +581,7 @@ function showInGraph(
     )) as NodeRef | undefined;
   if (!node || node.kind !== 'node') {
     vscode.window.showWarningMessage(
-      `Rocq Graph: ${sym} no está en el grafo.`,
+      `Rocql: ${sym} no está en el grafo.`,
     );
     return;
   }
@@ -730,7 +786,7 @@ async function candidatesToLocations(
     if (!uri) {
       const matches = await vscode.workspace.findFiles(
         `**/${c.file}`,
-        '**/{node_modules,_build,.rocqgraph}/**',
+        '**/{node_modules,_build,.rocql}/**',
         1,
       );
       if (matches.length === 0) continue;
@@ -765,14 +821,14 @@ async function goToDefinition(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: necesito un editor activo.',
+      'Rocql: necesito un editor activo.',
     );
     return;
   }
   const sym = symbolUnderCursor();
   if (!sym) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: pon el cursor sobre un identificador.',
+      'Rocql: pon el cursor sobre un identificador.',
     );
     return;
   }
@@ -783,7 +839,7 @@ async function goToDefinition(): Promise<void> {
   );
   if (candidates.length === 0) {
     vscode.window.showInformationMessage(
-      `Rocq Graph: ${sym} no está en el grafo. ¿Falta un rebuild?`,
+      `Rocql: ${sym} no está en el grafo. ¿Falta un rebuild?`,
     );
     return;
   }
@@ -813,7 +869,7 @@ async function findReferences(): Promise<void> {
   const sym = symbolUnderCursor();
   if (!sym) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: poné el cursor sobre un identificador.',
+      'Rocql: poné el cursor sobre un identificador.',
     );
     return;
   }
@@ -824,7 +880,7 @@ async function findReferences(): Promise<void> {
       1_000,
     ) as unknown[];
   } catch (err) {
-    vscode.window.showErrorMessage(`Rocq Graph: ${String(err)}`);
+    vscode.window.showErrorMessage(`Rocql: ${String(err)}`);
     return;
   }
   type Ref = {
@@ -859,7 +915,7 @@ async function findReferences(): Promise<void> {
   }
   if (refs.length === 0) {
     vscode.window.showInformationMessage(
-      `Rocq Graph: nadie referencia a ${sym}.`,
+      `Rocql: nadie referencia a ${sym}.`,
     );
     return;
   }
@@ -882,6 +938,110 @@ async function findReferences(): Promise<void> {
   }
 }
 
+/**
+ * Salta desde la entrada Rocq bajo el cursor al punto correspondiente del PDF.
+ *
+ * Resuelve la entrada que encierra el cursor, busca su ancla `\rocqanchor{nombre}`
+ * (o `\label{rocq:nombre}`) en los .tex del workspace, y delega el forward-sync a
+ * LaTeX Workshop. Si no hay ancla, no hay a dónde saltar: se informa cómo crearla
+ * y termina sin error.
+ */
+async function jumpToPaper(): Promise<void> {
+  if (!connection) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== 'coq') {
+    vscode.window.showWarningMessage(
+      'Rocql: pon el cursor dentro de una entrada en un archivo .v.',
+    );
+    return;
+  }
+  const enclosing = await findEnclosingEntry(
+    editor.document,
+    editor.selection.active,
+  );
+  if (!enclosing || !enclosing.name) {
+    vscode.window.showInformationMessage(
+      'Rocql: el cursor no está dentro de una entrada Rocq.',
+    );
+    return;
+  }
+  const name = enclosing.name;
+
+  const texUris = await vscode.workspace.findFiles(
+    '**/*.tex',
+    '**/{node_modules,.rocql,_build}/**',
+  );
+  const matches: { uri: vscode.Uri; line: number }[] = [];
+  for (const uri of texUris) {
+    let text: string;
+    try {
+      text = fs.readFileSync(uri.fsPath, 'utf8');
+    } catch {
+      continue;
+    }
+    const line = findAnchorLine(text, name);
+    if (line !== undefined) matches.push({ uri, line });
+  }
+
+  if (matches.length === 0) {
+    const copyMacro = 'Copiar macro';
+    const choice = await vscode.window.showInformationMessage(
+      `Rocql: no hay ancla para ${name} en el .tex. Agrega ` +
+        `\\rocqanchor{${name}} junto al enunciado (y una vez el macro ` +
+        `${ROCQ_ANCHOR_MACRO} en el preámbulo).`,
+      copyMacro,
+    );
+    if (choice === copyMacro) {
+      await vscode.env.clipboard.writeText(`\\rocqanchor{${name}}`);
+    }
+    return;
+  }
+
+  // Ante duplicados (p. ej. main vs supplementary), dejar elegir; si es único, ir directo.
+  let target = matches[0];
+  if (matches.length > 1) {
+    const pick = await vscode.window.showQuickPick(
+      matches.map((m) => ({
+        label: vscode.workspace.asRelativePath(m.uri),
+        description: `línea ${m.line}`,
+        m,
+      })),
+      { title: `Ancla de ${name} en ${matches.length} archivos`, placeHolder: 'Elegir destino' },
+    );
+    if (!pick) return;
+    target = pick.m;
+  }
+
+  const lw = vscode.extensions.getExtension('James-Yu.latex-workshop');
+  const doc = await vscode.workspace.openTextDocument(target.uri);
+  const texEditor = await vscode.window.showTextDocument(doc, { preview: false });
+  const pos = new vscode.Position(target.line - 1, 0);
+  texEditor.selection = new vscode.Selection(pos, pos);
+  texEditor.revealRange(
+    new vscode.Range(pos, pos),
+    vscode.TextEditorRevealType.InCenter,
+  );
+
+  if (!lw) {
+    vscode.window.showWarningMessage(
+      'Rocql: instala LaTeX Workshop para sincronizar con el PDF. ' +
+        'Abrí el .tex en el ancla igual.',
+    );
+    return;
+  }
+  try {
+    await vscode.commands.executeCommand(
+      'latex-workshop.synctexto',
+      target.line,
+      target.uri.fsPath,
+    );
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `Rocql: forward-sync falló: ${String(err)}. ¿Compilaste el PDF con SyncTeX?`,
+    );
+  }
+}
+
 export function deactivate(): void {
   connection = undefined;
 }
@@ -896,7 +1056,7 @@ function refreshStatusBar(): void {
 function openGraphPanel(context: vscode.ExtensionContext): void {
   if (!connection) {
     vscode.window.showWarningMessage(
-      'Rocq Graph: la conexión no está disponible. Recarga la ventana.',
+      'Rocql: la conexión no está disponible. Recarga la ventana.',
     );
     return;
   }
@@ -908,7 +1068,7 @@ function openGraphPanel(context: vscode.ExtensionContext): void {
 
   panel = vscode.window.createWebviewPanel(
     'rocqGraph.panel',
-    'Rocq Graph',
+    'Rocql',
     vscode.ViewColumn.One,
     {
       enableScripts: true,
@@ -965,19 +1125,19 @@ async function openFile(file: string, line: number): Promise<void> {
   } catch {
     const matches = await vscode.workspace.findFiles(
       `**/${path.basename(file)}`,
-      '**/{node_modules,_build,.rocqgraph}/**',
+      '**/{node_modules,_build,.rocql}/**',
       5,
     );
     if (matches.length === 0) {
       vscode.window.showWarningMessage(
-        `Rocq Graph: no encontré ${file} en el workspace.`,
+        `Rocql: no encontré ${file} en el workspace.`,
       );
       return;
     }
     target = matches[0];
     if (matches.length > 1) {
       vscode.window.showInformationMessage(
-        `Rocq Graph: ${path.basename(file)} aparece ${matches.length} veces. Abrí ${vscode.workspace.asRelativePath(target)}.`,
+        `Rocql: ${path.basename(file)} aparece ${matches.length} veces. Abrí ${vscode.workspace.asRelativePath(target)}.`,
       );
     }
   }
@@ -1219,7 +1379,7 @@ async function onVfileSaved(doc: vscode.TextDocument): Promise<void> {
   try {
     const uris = await vscode.workspace.findFiles(
       '**/*.v',
-      '**/{node_modules,_build,.rocqgraph}/**',
+      '**/{node_modules,_build,.rocql}/**',
     );
     const project = discoverCoqProject(
       folder.uri.fsPath,
@@ -1239,7 +1399,7 @@ async function onVfileSaved(doc: vscode.TextDocument): Promise<void> {
     await applyBuiltGraph(merged, folder.uri.fsPath, 'textual delta');
   } catch (err) {
     vscode.window.showErrorMessage(
-      `Rocq Graph: auto-graph error: ${String(err)}`,
+      `Rocql: auto-graph error: ${String(err)}`,
     );
   } finally {
     autoGraphInFlight = false;
@@ -1309,7 +1469,7 @@ async function runDpdEnrich(): Promise<void> {
   try {
     const uris = await vscode.workspace.findFiles(
       '**/*.v',
-      '**/{node_modules,_build,.rocqgraph}/**',
+      '**/{node_modules,_build,.rocql}/**',
     );
     if (uris.length === 0) return;
     const rootDir = folder.uri.fsPath;
@@ -1320,8 +1480,17 @@ async function runDpdEnrich(): Promise<void> {
     if (project.modules.size === 0) return;
     const moduleToFile = coqProjectModuleToFile(project, rootDir);
     const textual = buildTextualGraph(uris, rootDir, moduleToFile);
-    const cacheDir = path.join(rootDir, '.rocqgraph', 'dpd');
+    const cacheDir = path.join(rootDir, '.rocql', 'dpd');
     const harvest = await harvestDpdgraph({ project, cacheDir });
+    if (harvest.dpdgraphMissing) {
+      // Plugin ausente: avisar una vez y seguir con el textual sin enrichment.
+      console.warn('autoGraph: coq-dpdgraph no instalado; sin enrichment.');
+      if (!dpdgraphMissingNotified) {
+        dpdgraphMissingNotified = true;
+        await showDpdgraphMissingMessage();
+      }
+      return;
+    }
     if (harvest.error) {
       // Cero módulos compilaron. Mantener el textual sin enrichment.
       console.warn(`autoGraph: dpd harvest skipped: ${harvest.error}`);

@@ -51,6 +51,19 @@ describe('buildGraph — basic', () => {
     assert.ok(hasEdge(g, y.id, x.id), 'esperada arista y -> x');
   });
 
+  test('identificadores Unicode (griegos/subíndices) generan nodo y arista', () => {
+    // αi64 = α (U+03B1) + ASCII i64; αv lo referencia. Caso real de
+    // GlobalOptimism.v. Con regex ASCII el nodo ni siquiera existía.
+    const g = buildGraph([
+      f('A.v', 'Definition αi64 := 1.\nDefinition αv := αi64.'),
+    ]);
+    const ai64 = node(g, (n) => n.props.name === 'αi64');
+    assert.equal(ai64.props.kind, 'Definition');
+    assert.equal(ai64.id, 'A.v::αi64');
+    const av = node(g, (n) => n.props.name === 'αv');
+    assert.ok(hasEdge(g, av.id, ai64.id), 'esperada arista αv -> αi64');
+  });
+
   test('Theorem con Qed limpio NO marca admitted', () => {
     const g = buildGraph([
       f('A.v', 'Lemma foo : True. Proof. trivial. Qed.'),
